@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { pdfjs, pdfOptions } from "./pdf";
+import { readLocalPdf } from "./storage";
 export function Thumbnail({
   url,
+  localId,
   pdf,
   number = 1,
 }: {
   url?: string;
+  localId?: string;
   pdf?: PDFDocumentProxy;
   number?: number;
 }) {
@@ -15,15 +18,26 @@ export function Thumbnail({
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     let cancelled = false;
+    let localUrl: string | undefined;
     let own: ReturnType<typeof pdfjs.getDocument> | undefined;
     let task: any;
     const observer = new IntersectionObserver((entries) => {
       if (!entries[0].isIntersecting) return;
       observer.disconnect();
       (async () => {
+        if (localId) {
+          localUrl = URL.createObjectURL(await readLocalPdf(localId));
+          if (cancelled) {
+            URL.revokeObjectURL(localUrl);
+            return;
+          }
+        }
         const doc =
           pdf ||
-          (await (own = pdfjs.getDocument({ url, ...pdfOptions })).promise);
+          (await (own = pdfjs.getDocument({
+            url: localUrl || url,
+            ...pdfOptions,
+          })).promise);
         if (cancelled) return;
         const p = await doc.getPage(number);
         if (cancelled) return;
@@ -51,8 +65,9 @@ export function Thumbnail({
       observer.disconnect();
       task?.cancel();
       own?.destroy();
+      if (localUrl) URL.revokeObjectURL(localUrl);
     };
-  }, [url, pdf, number]);
+  }, [url, localId, pdf, number]);
   return (
     <>
       {failed ? (

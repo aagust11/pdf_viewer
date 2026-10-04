@@ -21,6 +21,8 @@ export type Annotation = {
   rects?: { x: number; y: number; w: number; h: number }[];
   text?: string;
   quote?: string;
+  scaleX?: number;
+  scaleY?: number;
   updatedAt: string;
 };
 export type Work = {
@@ -31,6 +33,7 @@ export type Work = {
   updatedAt: string;
 };
 export type Book = {
+  local?: boolean;
   id: string;
   title: string;
   description: string;
@@ -115,6 +118,11 @@ export function parseBackup(value: unknown): Backup {
         !Array.isArray(a.points) ||
         a.points.length < 1 ||
         a.points.length > 50000
+      )
+        return fail();
+      if (
+        (a.scaleX !== undefined && !num(a.scaleX, 0.05, 20)) ||
+        (a.scaleY !== undefined && !num(a.scaleY, 0.05, 20))
       )
         return fail();
       aids.add(a.id);

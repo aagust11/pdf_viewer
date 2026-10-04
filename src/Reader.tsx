@@ -45,7 +45,8 @@ const tools: [Tool, string, typeof Pencil][] = [
 ];
 const hints: Record<Tool, string> = {
   read: "Selecciona i copia text, o navega pel document.",
-  select: "Clica una anotació per seleccionar-la. Arrossega-la per moure-la.",
+  select:
+    "Selecciona una anotació: arrossega-la per moure-la i estira els tiradors per canviar-ne la mida.",
   highlight: "Arrossega sobre el text per subratllar-lo.",
   marker: "Marca lliurement, també en documents escanejats.",
   pen: "Dibuixa amb el ratolí, el dit o el llapis digital.",

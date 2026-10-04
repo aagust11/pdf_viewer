@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { pdfjs } from "./pdf";
 import type { Annotation, Kind, Point } from "./model";
 import { Shape } from "./Shapes";
+import { resized, type Bounds, type Handle } from "./geometry";
 export type Tool = Kind | "select" | "erase" | "read";
 export type Settings = {
   color: string;
@@ -34,7 +35,7 @@ export function Page({
   onAdd: (a: Annotation) => void;
   onChange: (a: Annotation) => void;
   onDelete: (id: string) => void;
-  onSelect: (id: string) => void;
+  onSelect: (id: string | null) => void;
   selected: string | null;
   onError: (s: string) => void;
   onEdit: (a: Annotation) => void;
@@ -46,10 +47,40 @@ export function Page({
   const [ready, setReady] = useState(false);
   const [hasText, setHasText] = useState(true);
   const [draft, setDraft] = useState<Annotation | null>(null);
+  const svg = useRef<SVGSVGElement>(null);
+  const [bounds, setBounds] = useState<Bounds | null>(null);
+  const selectedAnnotation =
+    draft?.id === selected
+      ? draft
+      : annotations.find((a) => a.id === selected && a.page === number);
+  useLayoutEffect(() => {
+    if (!selectedAnnotation || tool !== "select") {
+      setBounds(null);
+      return;
+    }
+    const element = [
+      ...(svg.current?.querySelectorAll<SVGGElement>("[data-annotation]") ??
+        []),
+    ].find((el) => el.dataset.annotation === selected);
+    if (!element) {
+      setBounds(null);
+      return;
+    }
+    const b = element.getBBox();
+    const min = (8 * size.w) / width;
+    setBounds({
+      x: (b.x - Math.max(0, min - b.width) / 2) / size.w,
+      y: (b.y - Math.max(0, min - b.height) / 2) / size.h,
+      w: Math.max(b.width, min) / size.w,
+      h: Math.max(b.height, min) / size.h,
+    });
+  }, [selectedAnnotation, tool, size, width, selected]);
   const gesture = useRef<{
     start: Point;
     original?: Annotation;
     draft: Annotation;
+    handle?: Handle;
+    bounds?: Bounds;
   } | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -147,6 +178,21 @@ export function Page({
   }
   function down(e: React.PointerEvent<SVGSVGElement>) {
     if (!ready || ["read", "highlight"].includes(tool)) return;
+    const handle = (e.target as Element).getAttribute(
+      "data-handle",
+    ) as Handle | null;
+    if (tool === "select" && handle && selectedAnnotation && bounds) {
+      e.preventDefault();
+      gesture.current = {
+        start: point(e),
+        original: selectedAnnotation,
+        draft: selectedAnnotation,
+        handle,
+        bounds,
+      };
+      e.currentTarget.setPointerCapture(e.pointerId);
+      return;
+    }
     const target = (e.target as Element)
       .closest("[data-annotation]")
       ?.getAttribute("data-annotation");
@@ -161,7 +207,7 @@ export function Page({
         const a = annotations.find((a) => a.id === target)!;
         gesture.current = { start: p, original: a, draft: a };
         e.currentTarget.setPointerCapture(e.pointerId);
-      }
+      } else onSelect(null);
       return;
     }
     if (tool === "text" || tool === "note") {
@@ -179,7 +225,9 @@ export function Page({
     if (!g) return;
     const p = point(e);
     let a;
-    if (g.original) {
+    if (g.original && g.handle && g.bounds) {
+      a = resized(g.original, g.bounds, g.handle, p);
+    } else if (g.original) {
       const dx = p.x - g.start.x,
         dy = p.y - g.start.y;
       a = {
@@ -207,7 +255,10 @@ export function Page({
     setDraft(null);
     const a = { ...g.draft, updatedAt: new Date().toISOString() };
     if (g.original) {
-      if (JSON.stringify(a.points) !== JSON.stringify(g.original.points))
+      if (
+        JSON.stringify({ ...a, updatedAt: "" }) !==
+        JSON.stringify({ ...g.original, updatedAt: "" })
+      )
         onChange(a);
     } else if (a.points.length > 1) onAdd(a);
   }
@@ -229,6 +280,7 @@ export function Page({
           }}
         />
         <svg
+          ref={svg}
           className="annotation-layer"
           data-page={number}
           viewBox={`0 0 ${size.w} ${size.h}`}
@@ -273,7 +325,76 @@ export function Page({
                 />
               </g>
             ))}
-          {draft && <Shape a={draft} w={size.w} h={size.h} />}
+          {draft && (
+            <g data-annotation={draft.id}>
+              <Shape a={draft} w={size.w} h={size.h} />
+            </g>
+          )}
+          {tool === "select" && selectedAnnotation && bounds && (
+            <g className="selection-controls">
+              <rect
+                data-selection-box="true"
+                x={bounds.x * size.w}
+                y={bounds.y * size.h}
+                width={bounds.w * size.w}
+                height={bounds.h * size.h}
+                fill="none"
+                stroke="#2673d9"
+                strokeWidth={1.2}
+                vectorEffect="non-scaling-stroke"
+                strokeDasharray="4 3"
+                pointerEvents="none"
+              />
+              {(["arrow", "line"].includes(selectedAnnotation.kind)
+                ? [
+                    { name: "start", ...selectedAnnotation.points[0] },
+                    {
+                      name: "end",
+                      ...selectedAnnotation.points[
+                        selectedAnnotation.points.length - 1
+                      ],
+                    },
+                  ]
+                : [
+                    { name: "nw", x: bounds.x, y: bounds.y },
+                    { name: "ne", x: bounds.x + bounds.w, y: bounds.y },
+                    { name: "sw", x: bounds.x, y: bounds.y + bounds.h },
+                    {
+                      name: "se",
+                      x: bounds.x + bounds.w,
+                      y: bounds.y + bounds.h,
+                    },
+                  ]
+              ).map((p) => {
+                const r = (7 * size.w) / width;
+                return (
+                  <rect
+                    key={p.name}
+                    data-handle={p.name}
+                    aria-label={`Redimensionar ${p.name}`}
+                    x={p.x * size.w - r}
+                    y={p.y * size.h - r}
+                    width={r * 2}
+                    height={r * 2}
+                    rx={r * 0.2}
+                    fill="white"
+                    stroke="#2673d9"
+                    strokeWidth={1.5}
+                    vectorEffect="non-scaling-stroke"
+                    style={{
+                      pointerEvents: "all",
+                      cursor:
+                        p.name === "start" || p.name === "end"
+                          ? "crosshair"
+                          : p.name === "nw" || p.name === "se"
+                            ? "nwse-resize"
+                            : "nesw-resize",
+                    }}
+                  />
+                );
+              })}
+            </g>
+          )}
         </svg>
         {!ready && <div className="page-loading">Carregant pàgina…</div>}
       </div>

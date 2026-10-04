@@ -77,25 +77,21 @@ test("anotacions, persistència, zoom, JSON i PDF", async ({
   const context = await browser.newContext();
   const fresh = await context.newPage();
   await fresh.goto("/");
-  await fresh
-    .locator('input[type=file][accept*="json"]')
-    .setInputFiles({
-      name: "backup.json",
-      mimeType: "application/json",
-      buffer: Buffer.from(JSON.stringify(initial)),
-    });
+  await fresh.locator('input[type=file][accept*="json"]').setInputFiles({
+    name: "backup.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(initial)),
+  });
   await fresh.getByRole("button", { name: "Combinar", exact: true }).click();
   await fresh.getByRole("button", { name: /Comença a explorar/ }).click();
   await expect(fresh.locator("[data-annotation]")).toHaveCount(3);
   expect((await backup(fresh)).documents).toEqual(initial.documents);
   // Re-importing does not duplicate annotation identities.
-  await fresh
-    .locator('input[type=file][accept*="json"]')
-    .setInputFiles({
-      name: "backup.json",
-      mimeType: "application/json",
-      buffer: Buffer.from(JSON.stringify(initial)),
-    });
+  await fresh.locator('input[type=file][accept*="json"]').setInputFiles({
+    name: "backup.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(initial)),
+  });
   await fresh.getByRole("button", { name: "Combinar", exact: true }).click();
   await expect(fresh.locator("[data-annotation]")).toHaveCount(3);
   const dp = fresh.waitForEvent("download");
@@ -130,15 +126,13 @@ test("biblioteca, mòbil, bloqueig multipestanya i JSON invàlid", async ({
     }),
   ).toBeVisible();
   await tab.close();
-  await page
-    .locator('input[type=file][accept*="json"]')
-    .setInputFiles({
-      name: "bad.json",
-      mimeType: "application/json",
-      buffer: Buffer.from(
-        '{"format":"fulla-annotations","version":1,"documents":[{"id":"bad"}]}',
-      ),
-    });
+  await page.locator('input[type=file][accept*="json"]').setInputFiles({
+    name: "bad.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(
+      '{"format":"fulla-annotations","version":1,"documents":[{"id":"bad"}]}',
+    ),
+  });
   await expect(page.getByRole("alert")).toContainText(
     "No s’ha modificat cap dada",
   );
@@ -177,4 +171,197 @@ test("validation guards and merge semantics", () => {
     parseBackup({ format: "fulla-annotations", version: 1, documents: [w, w] }),
   ).toThrow();
   expect(mergeWorks([w], [w], false)).toHaveLength(1);
+});
+
+test("PDF personal persistent, selector amb moviment i redimensió", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(
+    page.getByRole("button", { name: "Afegir un PDF", exact: true }),
+  ).toBeEnabled();
+  const bytes = await readFile("public/pdfs/Benvinguda.pdf");
+  await page.locator('input[type=file][accept*="pdf"]').setInputFiles({
+    name: "El meu dossier.pdf",
+    mimeType: "application/pdf",
+    buffer: bytes,
+  });
+  await expect(page.locator(".page-loading")).toHaveCount(0);
+  await expect(page.locator(".textLayer span").first()).toBeVisible();
+  await page.getByRole("button", { name: "Rectangle", exact: true }).click();
+  const paper = await page.locator(".annotation-layer").boundingBox();
+  await page.mouse.move(
+    paper!.x + paper!.width * 0.15,
+    paper!.y + paper!.height * 0.2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    paper!.x + paper!.width * 0.35,
+    paper!.y + paper!.height * 0.35,
+    { steps: 5 },
+  );
+  await page.mouse.up();
+  await page.getByRole("button", { name: "Seleccionar", exact: true }).click();
+  await page.locator("[data-annotation] rect").click();
+  const before = await backup(page);
+  const a = before.documents[0].annotations[0];
+  const corner = page.locator('[data-handle="se"]');
+  await expect(corner).toBeVisible();
+  const handle = await corner.boundingBox();
+  await page.mouse.move(
+    handle!.x + handle!.width / 2,
+    handle!.y + handle!.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(handle!.x + 60, handle!.y + 55, { steps: 5 });
+  await page.mouse.up();
+  const after = await backup(page);
+  const resized = after.documents[0].annotations[0];
+  expect(resized.points[1].x).toBeGreaterThan(a.points[1].x);
+  expect(resized.points[1].y).toBeGreaterThan(a.points[1].y);
+  expect(resized.points[0].x).toBeCloseTo(a.points[0].x, 6);
+  expect(resized.points[0].y).toBeCloseTo(a.points[0].y, 6);
+  // Drag the selected shape rather than its handles.
+  const shape = await page.locator("[data-annotation] rect").boundingBox();
+  await page.mouse.move(
+    shape!.x + shape!.width / 2,
+    shape!.y + shape!.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    shape!.x + shape!.width / 2 + 35,
+    shape!.y + shape!.height / 2 + 25,
+    { steps: 5 },
+  );
+  await page.mouse.up();
+  const moved = (await backup(page)).documents[0].annotations[0];
+  expect(moved.points[0].x).toBeGreaterThan(resized.points[0].x);
+  expect(moved.points[1].x - moved.points[0].x).toBeCloseTo(
+    resized.points[1].x - resized.points[0].x,
+    5,
+  );
+  await page.getByRole("button", { name: "Desfer", exact: true }).click();
+  expect((await backup(page)).documents[0].annotations[0].points).toEqual(
+    resized.points,
+  );
+  await page.getByRole("button", { name: "Refer", exact: true }).click();
+  await page.getByRole("button", { name: "Tornar a la biblioteca" }).click();
+  await expect(
+    page.getByRole("button", { name: /El meu dossier/ }),
+  ).toBeVisible();
+  await expect(page.locator(".book-cover canvas")).toHaveAttribute(
+    "data-loaded",
+    "true",
+  );
+  await page.reload();
+  const card = page.getByRole("button", { name: /El meu dossier/ });
+  await expect(card).toContainText("1 anotacions");
+  await card.click();
+  await expect(page.locator(".page-loading")).toHaveCount(0);
+  await expect(page.locator("[data-annotation]")).toHaveCount(1);
+  expect((await backup(page)).documents[0].annotations[0].points).toEqual(
+    moved.points,
+  );
+  // Duplicate upload is a single entry and preserves annotations.
+  await page.getByRole("button", { name: "Tornar a la biblioteca" }).click();
+  await page.locator('input[type=file][accept*="pdf"]').setInputFiles({
+    name: "El meu dossier.pdf",
+    mimeType: "application/pdf",
+    buffer: bytes,
+  });
+  await expect(page.locator("[data-annotation]")).toHaveCount(1);
+  await page.getByRole("button", { name: "Tornar a la biblioteca" }).click();
+  await expect(page.locator(".book-card")).toHaveCount(1);
+});
+
+test("redimensionar notes i fletxes; dades compatibles amb JSON", async ({
+  page,
+}) => {
+  await openDemo(page);
+  await page.getByRole("button", { name: "Nota", exact: true }).click();
+  const b = await page.locator(".annotation-layer").boundingBox();
+  await page.mouse.click(b!.x + b!.width * 0.2, b!.y + b!.height * 0.2);
+  await page
+    .getByRole("textbox", { name: "Contingut de l’anotació" })
+    .fill("Una idea");
+  await page.getByRole("button", { name: "Desar anotació" }).click();
+  await page.getByRole("button", { name: "Seleccionar", exact: true }).click();
+  await page.locator("[data-annotation] text").click();
+  const h = await page.locator('[data-handle="se"]').boundingBox();
+  await page.mouse.move(h!.x + 7, h!.y + 7);
+  await page.mouse.down();
+  await page.mouse.move(h!.x + 60, h!.y + 35, { steps: 5 });
+  await page.mouse.up();
+  const note = (await backup(page)).documents[0].annotations[0];
+  expect(note.scaleX).toBeGreaterThan(1);
+  expect(note.scaleY).toBeGreaterThan(1);
+  await draw(page, "Fletxa");
+  await page.getByRole("button", { name: "Seleccionar", exact: true }).click();
+  await page
+    .locator("[data-annotation]")
+    .last()
+    .locator("polyline")
+    .first()
+    .click();
+  const end = await page.locator('[data-handle="end"]').boundingBox();
+  await page.mouse.move(end!.x + 7, end!.y + 7);
+  await page.mouse.down();
+  await page.mouse.move(end!.x + 45, end!.y - 25, { steps: 5 });
+  await page.mouse.up();
+  const data = await backup(page);
+  expect(() => parseBackup(data)).not.toThrow();
+  expect(data.documents[0].annotations[1].points[1].x).toBeGreaterThan(0.6);
+  await page.screenshot({ path: "test-results/resize-selection.png" });
+});
+
+test("la migració conserva les anotacions de la versió anterior", async ({
+  page,
+}) => {
+  await page.goto("/library.json");
+  await page.evaluate(async () => {
+    const book = (await (await fetch("/library.json")).json())[0];
+    await new Promise<void>((resolve, reject) => {
+      const req = indexedDB.open("fulla-library", 1);
+      req.onupgradeneeded = () =>
+        req.result.createObjectStore("work", { keyPath: "id" });
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {
+        const db = req.result;
+        const tx = db.transaction("work", "readwrite");
+        tx.objectStore("work").put({
+          id: book.id,
+          title: book.title,
+          page: 2,
+          updatedAt: new Date().toISOString(),
+          annotations: [
+            {
+              id: "existing",
+              page: 2,
+              kind: "arrow",
+              points: [
+                { x: 0.2, y: 0.2 },
+                { x: 0.3, y: 0.3 },
+              ],
+              width: 2,
+              opacity: 1,
+              color: "#123456",
+              fontSize: 16,
+              updatedAt: new Date().toISOString(),
+            },
+          ],
+        });
+        tx.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+        tx.onerror = () => reject(tx.error);
+      };
+    });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: /Comença a explorar/ }).click();
+  await expect(
+    page.getByRole("spinbutton", { name: "Número de pàgina" }),
+  ).toHaveValue("2");
+  await expect(page.locator('[data-annotation="existing"]')).toHaveCount(1);
 });

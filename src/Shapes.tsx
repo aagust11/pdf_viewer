@@ -36,7 +36,9 @@ export function Shape({
       .flatMap((s) => s.match(/.{1,34}(?:\s|$)|.{1,34}/g) || [""]);
     const tw = Math.max(60, ...lines.map((l) => l.length * a.fontSize * 0.62));
     shape = (
-      <g>
+      <g
+        transform={`translate(${first.x} ${first.y}) scale(${a.scaleX ?? 1} ${a.scaleY ?? 1}) translate(${-first.x} ${-first.y})`}
+      >
         {a.kind === "note" && (
           <rect
             x={first.x - 7}

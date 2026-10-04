@@ -25,7 +25,13 @@ import {
   mergeWorks,
   download,
 } from "./model";
-import { readWorks, putWorks } from "./storage";
+import {
+  readWorks,
+  putWorks,
+  readLocalBooks,
+  readLocalPdf,
+  putLocalBook,
+} from "./storage";
 import { Thumbnail } from "./Thumbnail";
 import { Reader } from "./Reader";
 import "pdfjs-dist/web/pdf_viewer.css";
@@ -33,6 +39,7 @@ import "./style.css";
 function App() {
   const [books, setBooks] = useState<Book[]>([]),
     [works, setWorks] = useState<Work[]>([]),
+    [localBooks, setLocalBooks] = useState<Book[]>([]),
     [active, setActive] = useState<{
       book: Book;
       pdf: PDFDocumentProxy;
@@ -59,10 +66,11 @@ function App() {
     let stopped = false;
     const initialize = async () => {
       try {
-        const w = await readWorks();
+        const [w, local] = await Promise.all([readWorks(), readLocalBooks()]);
         if (stopped) return;
         current.current = w;
         setWorks(w);
+        setLocalBooks(local);
         setReady(true);
       } catch {
         setError(
@@ -98,7 +106,7 @@ function App() {
       .catch(() => {
         setCatalogError(true);
         setError(
-          "No s’ha pogut carregar el catàleg. Recarrega la pàgina o obre un PDF del teu ordinador.",
+          "No s’ha pogut carregar el catàleg. Recarrega la pàgina o afegeix un PDF del teu ordinador. Quedarà guardat a la teva biblioteca local.",
         );
       });
     try {
@@ -145,6 +153,10 @@ function App() {
     setLoading("Obrint document…");
     let task: ReturnType<typeof pdfjs.getDocument> | undefined;
     try {
+      if (!data && book.local)
+        data = new Uint8Array(
+          await (await readLocalPdf(book.id)).arrayBuffer(),
+        );
       task = pdfjs.getDocument({
         ...pdfOptions,
         ...(data
@@ -154,17 +166,19 @@ function App() {
       const pdf = await task.promise;
       if (token !== loadToken.current) {
         await pdf.destroy();
-        return;
+        return false;
       }
       if (!current.current.some((w) => w.id === book.id))
         update(blankWork(book));
       setActive({ book, pdf });
+      return true;
     } catch (e) {
       await task?.destroy();
       setError(
         "No s’ha pogut obrir el PDF. " +
           (e instanceof Error ? e.message : String(e)),
       );
+      return false;
     } finally {
       if (token === loadToken.current) setLoading("");
     }
@@ -179,18 +193,33 @@ function App() {
         Array.from(new Uint8Array(hash), (b) =>
           b.toString(16).padStart(2, "0"),
         ).join("");
-      await open(
-        {
-          id,
-          title: file.name.replace(/\.pdf$/i, ""),
-          description: "",
-          category: "Local",
-          url: "",
-          order: 0,
-          size: file.size,
-        },
-        bytes,
-      );
+      const book: Book = {
+        id,
+        title: file.name.replace(/\.pdf$/i, ""),
+        description: "PDF de la teva biblioteca personal.",
+        category: "Els meus PDFs",
+        url: "",
+        order: 0,
+        size: file.size,
+        local: true,
+      };
+      if (!(await open(book, bytes))) return;
+      saveCount.current++;
+      setStatus("Desant PDF…");
+      let pdfSaved = false;
+      try {
+        await putLocalBook(book, file);
+        setLocalBooks((old) => [book, ...old.filter((b) => b.id !== id)]);
+        pdfSaved = true;
+      } catch {
+        setError(
+          "No s’ha pogut guardar el PDF a la biblioteca local (espai insuficient o desament no disponible). Conserva el fitxer original i exporta les anotacions en JSON.",
+        );
+      } finally {
+        saveCount.current--;
+        if (!saveCount.current)
+          setStatus(pdfSaved ? "Desat al navegador" : "PDF no desat");
+      }
     } catch {
       setLoading("");
       setError("No s’ha pogut llegir aquest fitxer PDF.");
@@ -227,7 +256,11 @@ function App() {
     persist(all, all);
     setPending(null);
   }
-  const shown = books.filter(
+  const allBooks = [
+    ...localBooks,
+    ...books.filter((b) => !localBooks.some((local) => local.id === b.id)),
+  ];
+  const shown = allBooks.filter(
     (b) =>
       (category === "Tots" || b.category === category) &&
       `${b.title} ${b.description}`
@@ -311,10 +344,10 @@ function App() {
                       onClick={() => pdfInput.current?.click()}
                     >
                       <Plus size={19} />
-                      Obrir un PDF local <ArrowUpRight size={17} />
+                      Afegir un PDF <ArrowUpRight size={17} />
                     </button>
                     <span className="local-caption">
-                      Només el veuràs tu. No es publica ni s’envia.
+                      Queda a la teva biblioteca, en aquest navegador.
                     </span>
                   </div>
                   <div className="hero-art" aria-hidden="true">
@@ -363,7 +396,9 @@ function App() {
                       <span className="eyebrow">ELS DOCUMENTS</span>
                       <h2>
                         La biblioteca{" "}
-                        <span>{books.length.toString().padStart(2, "0")}</span>
+                        <span>
+                          {allBooks.length.toString().padStart(2, "0")}
+                        </span>
                       </h2>
                     </div>
                     <label className="search">
@@ -378,17 +413,18 @@ function App() {
                   </div>
                   <div className="collection-controls">
                     <div className="categories">
-                      {["Tots", ...new Set(books.map((b) => b.category))].map(
-                        (c) => (
-                          <button
-                            key={c}
-                            className={category === c ? "chosen" : ""}
-                            onClick={() => setCategory(c)}
-                          >
-                            {c === "Tots" && <Library size={14} />} {c}
-                          </button>
-                        ),
-                      )}
+                      {[
+                        "Tots",
+                        ...new Set(allBooks.map((b) => b.category)),
+                      ].map((c) => (
+                        <button
+                          key={c}
+                          className={category === c ? "chosen" : ""}
+                          onClick={() => setCategory(c)}
+                        >
+                          {c === "Tots" && <Library size={14} />} {c}
+                        </button>
+                      ))}
                     </div>
                     <span>
                       {shown.length}{" "}
@@ -407,7 +443,12 @@ function App() {
                         >
                           <div className="book-cover">
                             <Thumbnail
-                              url={`${import.meta.env.BASE_URL}${b.url}`}
+                              url={
+                                b.local
+                                  ? undefined
+                                  : `${import.meta.env.BASE_URL}${b.url}`
+                              }
+                              localId={b.local ? b.id : undefined}
                             />
                             <span className="pdf-tag">
                               PDF · {(b.size / 1024 / 1024).toFixed(1)} MB
@@ -417,7 +458,11 @@ function App() {
                             </span>
                           </div>
                           <div className="book-meta">
-                            <span>{b.category}</span>
+                            <span>
+                              {b.local
+                                ? "Personal · aquest navegador"
+                                : b.category}
+                            </span>
                             {!!work?.annotations.length && (
                               <span className="annotation-count">
                                 {work.annotations.length} anotacions
@@ -447,12 +492,12 @@ function App() {
                       <h3>
                         {catalogError
                           ? "Catàleg no disponible"
-                          : books.length
+                          : allBooks.length
                             ? "No hi ha coincidències"
                             : "La biblioteca està preparada"}
                       </h3>
                       <p>
-                        {books.length
+                        {allBooks.length
                           ? "Prova un altre títol o categoria."
                           : "Afegeix PDFs a public/pdfs/ del repositori o obre un PDF local per començar."}
                       </p>
@@ -547,7 +592,7 @@ function App() {
                   documents inclosos al JSON.
                 </p>
                 {pending.documents.some(
-                  (w) => !books.some((b) => b.id === w.id),
+                  (w) => !allBooks.some((b) => b.id === w.id),
                 ) && (
                   <p className="notice">
                     Hi ha documents fora del catàleg. Les anotacions quedaran
@@ -595,7 +640,9 @@ function App() {
                   </li>
                 </ol>
                 <p>
-                  Els PDF locals no es publiquen. Per afegir documents per a
+                  Els PDF locals queden guardats amb les anotacions en aquest
+                  navegador i no es publiquen. El JSON només inclou les
+                  anotacions, no els arxius PDF. Per afegir documents per a
                   tothom, puja’ls a <code>public/pdfs/</code> del repositori: es
                   publicaran quan acabi el desplegament.
                 </p>
