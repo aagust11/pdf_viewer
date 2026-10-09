@@ -29,6 +29,7 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import { Page, type Tool, type Settings } from "./Page";
 import { Thumbnail } from "./Thumbnail";
 import type { Annotation, Book, Work } from "./model";
+import { visiblePages, bookUrl, type ReadingOptions } from "./reading";
 const tools: [Tool, string, typeof Pencil][] = [
   ["read", "Llegir", MousePointer],
   ["select", "Seleccionar", MousePointer2],
@@ -68,7 +69,13 @@ export function Reader({
   onImport,
   status,
   onError,
+  onEmbed,
+  embedded = false,
+  initialOptions,
 }: {
+  embedded?: boolean;
+  initialOptions?: ReadingOptions;
+  onEmbed?: () => void;
   pdf: PDFDocumentProxy;
   book: Book;
   work: Work;
@@ -87,7 +94,12 @@ export function Reader({
     fontSize: 16,
   });
   const [zoom, setZoom] = useState(1),
-    [spread, setSpread] = useState(false),
+    [spread, setSpread] = useState(
+      initialOptions?.spread ?? book.reading?.spread ?? false,
+    ),
+    [cover, setCover] = useState(
+      initialOptions?.cover ?? book.reading?.cover ?? true,
+    ),
     [thumbs, setThumbs] = useState(false),
     [selected, setSelected] = useState<string | null>(null),
     [editing, setEditing] = useState<Annotation | null>(null),
@@ -96,16 +108,65 @@ export function Reader({
     [redo, setRedo] = useState<Annotation[][]>([]);
   const area = useRef<HTMLDivElement>(null);
   const [available, setAvailable] = useState(1000);
-  const page = Math.min(pdf.numPages, Math.max(1, work.page));
+  const [availableHeight, setAvailableHeight] = useState(650);
+  const [pageRatio, setPageRatio] = useState(1.415);
+  const pages = visiblePages(work.page, pdf.numPages, { spread, cover });
+  const page = pages[0];
+  const nextPage = pages[pages.length - 1] + 1;
+  const previousPage = page - 1;
+  const [fullScreen, setFullScreen] = useState(!!document.fullscreenElement);
   useEffect(() => {
-    const o = new ResizeObserver((es) => setAvailable(es[0].contentRect.width));
+    const change = () => setFullScreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", change);
+    return () => document.removeEventListener("fullscreenchange", change);
+  }, []);
+  async function toggleFullscreen() {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else if (document.documentElement.requestFullscreen)
+        await document.documentElement.requestFullscreen();
+      else throw new Error();
+    } catch {
+      onError(
+        "La pantalla completa està bloquejada pel navegador o per la pàgina que conté el visor. Fes servir «Ampliar visor» per obrir-lo en una pestanya nova.",
+      );
+    }
+  }
+  useEffect(() => {
+    const o = new ResizeObserver((es) => {
+      setAvailable(es[0].contentRect.width);
+      setAvailableHeight(es[0].contentRect.height);
+    });
     o.observe(area.current!);
     return () => o.disconnect();
   }, []);
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all(pages.map((n) => pdf.getPage(n)))
+      .then((ps) => {
+        if (!cancelled)
+          setPageRatio(
+            Math.max(
+              ...ps.map((p) => {
+                const v = p.getViewport({ scale: 1 });
+                return v.height / v.width;
+              }),
+            ),
+          );
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [pdf, pages.join(",")]);
   const width =
     Math.max(
-      180,
-      Math.min(900, (available - (spread ? 72 : 48)) / (spread ? 2 : 1)),
+      embedded ? 70 : 180,
+      Math.min(
+        900,
+        (available - (spread ? 72 : 48)) / (spread ? 2 : 1),
+        embedded ? (availableHeight - 80) / pageRatio : Infinity,
+      ),
     ) * zoom;
   function commit(annotations: Annotation[]) {
     setUndo((u) => [...u, work.annotations].slice(-80));
@@ -158,8 +219,8 @@ export function Reader({
         e.preventDefault();
         e.shiftKey ? redoAction() : undoAction();
       } else if (e.key === "Delete" && selected) del(selected);
-      else if (e.key === "ArrowRight") go(page + (spread ? 2 : 1));
-      else if (e.key === "ArrowLeft") go(page - (spread ? 2 : 1));
+      else if (e.key === "ArrowRight") go(nextPage);
+      else if (e.key === "ArrowLeft") go(previousPage);
     }
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
@@ -182,137 +243,175 @@ export function Reader({
     }
   }
   return (
-    <div className="reader">
+    <div className={embedded ? "reader embedded-reader" : "reader"}>
       <header className="reader-header">
-        <button
-          className="icon-button"
-          onClick={onBack}
-          aria-label="Tornar a la biblioteca"
-        >
-          <ArrowLeft />
-        </button>
+        {!embedded && (
+          <button
+            className="icon-button"
+            onClick={onBack}
+            aria-label="Tornar a la biblioteca"
+          >
+            <ArrowLeft />
+          </button>
+        )}
         <div className="reader-title">
           <small>FULLA / LECTURA</small>
           <h1>{book.title}</h1>
         </div>
-        <span className="save-state">
-          <Check size={14} />
-          {status}
-        </span>
-        <button onClick={onImport} className="text-button">
-          Importar JSON
-        </button>
-        <button className="primary small" onClick={onExport}>
-          <Download size={16} />
-          Exportar JSON
-        </button>
-      </header>
-      <div className="toolbar" aria-label="Eines d’anotació">
-        <div className="tool-group">
-          {tools.map(([id, label, Icon]) => (
-            <button
-              key={id}
-              aria-label={label}
-              title={label}
-              aria-pressed={tool === id}
-              className={tool === id ? "tool active" : "tool"}
-              onClick={() => {
-                setTool(id);
-                setSelected(null);
-              }}
-            >
-              <Icon size={19} />
-              <span>{label}</span>
+        {!embedded && (
+          <>
+            <span className="save-state">
+              <Check size={14} />
+              {status}
+            </span>
+            <button onClick={onImport} className="text-button">
+              Importar JSON
             </button>
-          ))}
-        </div>
-        <div className="tool-group">
-          <button
-            className="tool"
-            onClick={undoAction}
-            disabled={!undo.length}
-            aria-label="Desfer"
-            title="Desfer (Ctrl+Z)"
-          >
-            <Undo2 size={19} />
-          </button>
-          <button
-            className="tool"
-            onClick={redoAction}
-            disabled={!redo.length}
-            aria-label="Refer"
-            title="Refer (Ctrl+Maj+Z)"
-          >
-            <Redo2 size={19} />
-          </button>
-        </div>
-        <div className="style-controls">
-          <label title="Color">
-            Color{" "}
-            <input
-              aria-label="Color"
-              type="color"
-              value={selectedA?.color || settings.color}
-              onChange={(e) => styleChange({ color: e.target.value })}
-            />
-          </label>
-          <label>
-            Gruix{" "}
-            <select
-              aria-label="Gruix"
-              value={selectedA?.width || settings.width}
-              onChange={(e) => styleChange({ width: Number(e.target.value) })}
-            >
-              {[1, 2.5, 5, 8].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Opacitat{" "}
-            <select
-              aria-label="Opacitat"
-              value={selectedA?.opacity || settings.opacity}
-              onChange={(e) => styleChange({ opacity: Number(e.target.value) })}
-            >
-              {[0.2, 0.35, 0.4, 0.6, 1].map((n) => (
-                <option key={n} value={n}>
-                  {Math.round(n * 100)}%
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Text{" "}
-            <select
-              aria-label="Mida del text"
-              value={selectedA?.fontSize || settings.fontSize}
-              onChange={(e) =>
-                styleChange({ fontSize: Number(e.target.value) })
-              }
-            >
-              {[12, 16, 20, 28, 36].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </div>
-      <div className="reader-hint">
-        <span>{hints[tool]}</span>
-        {selectedA && (
-          <div>
-            <button onClick={() => setEditing({ ...selectedA })}>Editar</button>
-            <button onClick={() => del(selectedA.id)}>
-              <Trash2 size={14} /> Eliminar
+            <button className="primary small" onClick={onExport}>
+              <Download size={16} />
+              Exportar JSON
             </button>
-          </div>
+          </>
         )}
-      </div>
+        {onEmbed && <button onClick={onEmbed}>Inserir llibre</button>}
+        {embedded && (
+          <>
+            <a
+              className="expand-reader"
+              href={bookUrl(book.id, { spread, cover }, false, page)}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Ampliar visor ↗
+            </a>
+            <button
+              className="icon-button"
+              aria-label={
+                fullScreen ? "Sortir de pantalla completa" : "Pantalla completa"
+              }
+              onClick={toggleFullscreen}
+            >
+              <Maximize size={18} />
+            </button>
+          </>
+        )}
+      </header>
+      {!embedded && (
+        <>
+          <div className="toolbar" aria-label="Eines d’anotació">
+            <div className="tool-group">
+              {tools.map(([id, label, Icon]) => (
+                <button
+                  key={id}
+                  aria-label={label}
+                  title={label}
+                  aria-pressed={tool === id}
+                  className={tool === id ? "tool active" : "tool"}
+                  onClick={() => {
+                    setTool(id);
+                    setSelected(null);
+                  }}
+                >
+                  <Icon size={19} />
+                  <span>{label}</span>
+                </button>
+              ))}
+            </div>
+            <div className="tool-group">
+              <button
+                className="tool"
+                onClick={undoAction}
+                disabled={!undo.length}
+                aria-label="Desfer"
+                title="Desfer (Ctrl+Z)"
+              >
+                <Undo2 size={19} />
+              </button>
+              <button
+                className="tool"
+                onClick={redoAction}
+                disabled={!redo.length}
+                aria-label="Refer"
+                title="Refer (Ctrl+Maj+Z)"
+              >
+                <Redo2 size={19} />
+              </button>
+            </div>
+            <div className="style-controls">
+              <label title="Color">
+                Color{" "}
+                <input
+                  aria-label="Color"
+                  type="color"
+                  value={selectedA?.color || settings.color}
+                  onChange={(e) => styleChange({ color: e.target.value })}
+                />
+              </label>
+              <label>
+                Gruix{" "}
+                <select
+                  aria-label="Gruix"
+                  value={selectedA?.width || settings.width}
+                  onChange={(e) =>
+                    styleChange({ width: Number(e.target.value) })
+                  }
+                >
+                  {[1, 2.5, 5, 8].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Opacitat{" "}
+                <select
+                  aria-label="Opacitat"
+                  value={selectedA?.opacity || settings.opacity}
+                  onChange={(e) =>
+                    styleChange({ opacity: Number(e.target.value) })
+                  }
+                >
+                  {[0.2, 0.35, 0.4, 0.6, 1].map((n) => (
+                    <option key={n} value={n}>
+                      {Math.round(n * 100)}%
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Text{" "}
+                <select
+                  aria-label="Mida del text"
+                  value={selectedA?.fontSize || settings.fontSize}
+                  onChange={(e) =>
+                    styleChange({ fontSize: Number(e.target.value) })
+                  }
+                >
+                  {[12, 16, 20, 28, 36].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </div>
+          <div className="reader-hint">
+            <span>{hints[tool]}</span>
+            {selectedA && (
+              <div>
+                <button onClick={() => setEditing({ ...selectedA })}>
+                  Editar
+                </button>
+                <button onClick={() => del(selectedA.id)}>
+                  <Trash2 size={14} /> Eliminar
+                </button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
       <div className="reader-body">
         {thumbs && (
           <aside className="thumbnails" aria-label="Pàgines">
@@ -331,26 +430,24 @@ export function Reader({
         )}
         <div className="reading-area" ref={area}>
           <div className="pages">
-            {[page, ...(spread && page < pdf.numPages ? [page + 1] : [])].map(
-              (n) => (
-                <Page
-                  key={n}
-                  pdf={pdf}
-                  number={n}
-                  width={width}
-                  annotations={work.annotations}
-                  settings={settings}
-                  tool={tool}
-                  onAdd={(a) => commit([...work.annotations, a])}
-                  onChange={change}
-                  onDelete={del}
-                  onSelect={setSelected}
-                  selected={selected}
-                  onError={onError}
-                  onEdit={setEditing}
-                />
-              ),
-            )}
+            {pages.map((n) => (
+              <Page
+                key={n}
+                pdf={pdf}
+                number={n}
+                width={width}
+                annotations={work.annotations}
+                settings={settings}
+                tool={tool}
+                onAdd={(a) => commit([...work.annotations, a])}
+                onChange={change}
+                onDelete={del}
+                onSelect={setSelected}
+                selected={selected}
+                onError={onError}
+                onEdit={setEditing}
+              />
+            ))}
           </div>
         </div>
       </div>
@@ -374,13 +471,24 @@ export function Reader({
           >
             <BookOpen size={19} />
           </button>
+          <label className="cover-option">
+            <input
+              type="checkbox"
+              checked={cover}
+              onChange={(e) => {
+                setCover(e.target.checked);
+                setSelected(null);
+              }}
+            />
+            Portada sola
+          </label>
         </div>
         <div className="pagination">
           <button
             className="icon-button"
             aria-label="Pàgina anterior"
             disabled={page === 1}
-            onClick={() => go(page - (spread ? 2 : 1))}
+            onClick={() => go(previousPage)}
           >
             <ChevronLeft size={19} />
           </button>
@@ -402,8 +510,8 @@ export function Reader({
           <button
             className="icon-button"
             aria-label="Pàgina següent"
-            disabled={page + (spread ? 1 : 0) >= pdf.numPages}
-            onClick={() => go(page + (spread ? 2 : 1))}
+            disabled={nextPage > pdf.numPages}
+            onClick={() => go(nextPage)}
           >
             <ChevronRight size={19} />
           </button>
@@ -424,27 +532,26 @@ export function Reader({
           >
             +
           </button>
-          <button
-            className="icon-button"
-            aria-label="Pantalla completa"
-            onClick={() => {
-              (document.fullscreenElement
-                ? document.exitFullscreen()
-                : document.documentElement.requestFullscreen()
-              ).catch(() =>
-                onError("El navegador no permet activar la pantalla completa."),
-              );
-            }}
-          >
-            <Maximize size={17} />
-          </button>
-          <button
-            onClick={exportAnnotated}
-            disabled={!!busy}
-            className="text-button"
-          >
-            PDF anotat <Download size={15} />
-          </button>
+          {!embedded && (
+            <button
+              className="icon-button"
+              aria-label={
+                fullScreen ? "Sortir de pantalla completa" : "Pantalla completa"
+              }
+              onClick={toggleFullscreen}
+            >
+              <Maximize size={17} />
+            </button>
+          )}
+          {!embedded && (
+            <button
+              onClick={exportAnnotated}
+              disabled={!!busy}
+              className="text-button"
+            >
+              PDF anotat <Download size={15} />
+            </button>
+          )}
         </div>
       </footer>
       {editing && (

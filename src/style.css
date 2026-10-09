@@ -1139,3 +1139,81 @@ button.primary:hover {
     transition: none !important;
   }
 }
+.embed-options {
+  display: grid;
+  gap: 14px;
+  margin: 18px 0;
+}
+.embed-options label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.embed-options input[type="number"] {
+  width: 90px;
+}
+.embed-dialog textarea {
+  font-family: monospace;
+  font-size: 12px;
+  margin-top: 8px;
+}
+.embed-dialog small {
+  display: block;
+  line-height: 1.6;
+  margin-top: 16px;
+  letter-spacing: 0;
+}
+.cover-option {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.cover-option input {
+  accent-color: #234d40;
+}
+.expand-reader {
+  font-size: 12px;
+  padding: 8px;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.embedded-reader .reader-header {
+  min-height: 52px;
+  padding: 8px 14px;
+}
+.embedded-reader .reader-title small {
+  display: none;
+}
+.embedded-reader .reader-title h1 {
+  font-size: 14px;
+  margin: 0;
+}
+.linked-loading {
+  display: grid;
+  place-content: center;
+  height: 100dvh;
+  text-align: center;
+  padding: 20px;
+  gap: 15px;
+}
+.linked-loading h1 {
+  font-size: 18px;
+}
+.embedded-reader .reader-title {
+  flex: 1;
+  width: auto;
+}
+@media (max-width: 600px) {
+  .embedded-reader .reader-header {
+    flex-wrap: nowrap;
+  }
+  .expand-reader {
+    font-size: 10px;
+  }
+  .cover-option {
+    font-size: 10px;
+  }
+}

@@ -33,6 +33,7 @@ export type Work = {
   updatedAt: string;
 };
 export type Book = {
+  reading?: { spread: boolean; cover: boolean };
   local?: boolean;
   id: string;
   title: string;

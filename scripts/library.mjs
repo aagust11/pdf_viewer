@@ -43,6 +43,10 @@ for (const file of await scan(root)) {
     order: meta.order ?? 100,
     url: "pdfs/" + relative.split("/").map(encodeURIComponent).join("/"),
     size: bytes.length,
+    reading: {
+      spread: meta.reading?.spread === true,
+      cover: meta.reading?.cover !== false,
+    },
   });
 }
 books.sort((a, b) => a.order - b.order || a.title.localeCompare(b.title, "ca"));

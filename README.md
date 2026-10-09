@@ -67,3 +67,21 @@ GitHub Pages: el workflow inclòs compila i publica `dist`. Si Pages encara no e
 ## Verificació
 
 `tests/library.spec.ts` cobreix selecció real de text, fletxa, nota, desfer/refer, estabilitat de dades amb zoom, recàrrega, exportació/importació entre contextos de navegador, importació repetida sense duplicats, exportació PDF, JSON invàlid, pantalla mòbil i protecció multipestanya. També comprova la persistència dels PDF personals, càrregues duplicades, moviment, redimensió de formes, notes i fletxes, i desfer/refer de transformacions.
+
+## Inserir un llibre a Google Sites
+
+1. Obre un **llibre publicat** i prem **Inserir llibre** a la capçalera.
+2. Tria una o dues pàgines, si la primera és una portada sola, i l’alçada del visor.
+3. Prem **Copiar codi**. A Google Sites, ves a **Insereix → Insereix → Insereix codi**, enganxa l’iframe i ajusta l’alçada del bloc.
+
+La configuració queda inclosa a l’URL del codi. Amb portada: `1`, `2–3`, `4–5`; sense portada: `1–2`, `3–4`. Es pot canviar també durant la lectura. El visor s’ajusta a l’espai de l’iframe i inclou zoom, miniatures, navegació, pantalla completa i **Ampliar visor** en una pestanya nova. El navegador i tots els iframes contenidors han de permetre la pantalla completa; si la bloquegen, la nova pestanya és l’alternativa.
+
+El mode inserit és de lectura i no depèn del desament local ni del bloqueig entre pestanyes: es poden inserir diversos llibres al mateix Site. Els PDFs personals guardats només al navegador no es poden compartir amb un iframe; primer cal publicar-los. Els enllaços identifiquen la versió exacta del PDF: si se substitueix per un document diferent, genera un codi nou.
+
+Per fixar els valors inicials del PDF a la biblioteca, el JSON del document admet:
+
+```json
+{"title":"El meu llibre","reading":{"spread":true,"cover":true}}
+```
+
+Les opcions escollides al generador d’inserció tenen prioritat sobre aquests valors. Les còpies JSON d’anotacions no canvien.

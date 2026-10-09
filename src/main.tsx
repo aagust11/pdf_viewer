@@ -34,9 +34,12 @@ import {
 } from "./storage";
 import { Thumbnail } from "./Thumbnail";
 import { Reader } from "./Reader";
+import { EmbedDialog } from "./EmbedDialog";
+import { LinkedReader } from "./LinkedReader";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "./style.css";
 function App() {
+  const [embedBook, setEmbedBook] = useState<Book | null>(null);
   const [books, setBooks] = useState<Book[]>([]),
     [works, setWorks] = useState<Work[]>([]),
     [localBooks, setLocalBooks] = useState<Book[]>([]),
@@ -271,6 +274,9 @@ function App() {
   const activeWork = active && works.find((w) => w.id === active.book.id);
   return (
     <>
+      {embedBook && (
+        <EmbedDialog book={embedBook} onClose={() => setEmbedBook(null)} />
+      )}
       {locked ? (
         <main className="locked">
           <BookOpen size={40} />
@@ -301,6 +307,9 @@ function App() {
               onImport={() => jsonInput.current?.click()}
               status={status}
               onError={setError}
+              onEmbed={
+                !active.book.local ? () => setEmbedBook(active.book) : undefined
+              }
             />
           ) : (
             <div className="library-shell">
@@ -676,4 +685,6 @@ function App() {
     </>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(
+  new URLSearchParams(location.search).has("book") ? <LinkedReader /> : <App />,
+);
